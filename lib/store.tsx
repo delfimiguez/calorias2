@@ -29,6 +29,7 @@ interface AppStore {
   deleteTraining: (date: string, trainingId: string) => Promise<void>;
   updateMetrics: (date: string, metrics: Partial<DayLog["metrics"]>) => Promise<void>;
   updateDayNote: (date: string, note: string) => Promise<void>;
+  updateExtraBurn: (date: string, kcal: number | undefined) => Promise<void>;
   setDayTypeOverride: (date: string, type: DayLog["dayTypeOverride"]) => Promise<void>;
   addFoodItem: (item: Omit<FoodItem, "id">) => Promise<void>;
   updateFoodItem: (item: FoodItem) => Promise<void>;
@@ -146,6 +147,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await updateLog(log);
   };
 
+  const updateExtraBurn = async (date: string, kcal: number | undefined) => {
+    const log = ensureLog(date);
+    log.metrics = { ...log.metrics, extraBurn: kcal };
+    await updateLog(log);
+  };
+
   const setDayTypeOverride = async (date: string, type: DayLog["dayTypeOverride"]) => {
     const log = ensureLog(date);
     log.dayTypeOverride = type;
@@ -192,7 +199,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const exportCSV = async () => {
     const allLogs = await getAllLogs();
-    const rows = ["Date,DayType,Calories,Protein,Carbs,Fat,Steps,Water,Sleep,Weight,Deficit"];
+    const rows = ["Date,DayType,Calories,Protein,Carbs,Fat,BMR,ExerciseBurn,ExtraBurn,TotalBurn,DeficitVsBurn,Steps,Water,Sleep,Weight"];
     for (const log of allLogs.sort((a, b) => a.date.localeCompare(b.date))) {
       const cal = log.meals.reduce((s, m) => s + m.calories, 0);
       const prot = log.meals.reduce((s, m) => s + (m.protein ?? 0), 0);
@@ -201,8 +208,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const p = profile;
       const targetMap: Record<string, number> = { hybrid: p.calorieTargets.hybrid, pilates: p.calorieTargets.pilates, run: p.calorieTargets.run, rest: p.calorieTargets.rest };
       const dt = log.dayTypeOverride ?? "rest";
-      const deficit = (targetMap[dt] ?? p.calorieTargets.rest) - cal;
-      rows.push(`${log.date},${dt},${cal},${prot.toFixed(1)},${carbs.toFixed(1)},${fat.toFixed(1)},${log.metrics.steps ?? ""},${log.metrics.waterLiters ?? ""},${log.metrics.sleepHours ?? ""},${log.metrics.weightKg ?? ""},${deficit}`);
+      const bmr = p.bmrOverride ?? Math.round(10 * p.weightKg + 6.25 * p.heightCm - 5 * p.age - 161);
+      const exBurn = log.trainings.reduce((s: number, t: { caloriesBurned?: number }) => s + (t.caloriesBurned ?? 0), 0);
+      const extraBurn = log.metrics.extraBurn ?? 0;
+      const totalBurn = bmr + exBurn + extraBurn;
+      const deficitVsBurn = totalBurn - cal;
+      rows.push(`${log.date},${dt},${cal},${prot.toFixed(1)},${carbs.toFixed(1)},${fat.toFixed(1)},${bmr},${exBurn},${extraBurn},${totalBurn},${deficitVsBurn},${log.metrics.steps ?? ""},${log.metrics.waterLiters ?? ""},${log.metrics.sleepHours ?? ""},${log.metrics.weightKg ?? ""}`);
     }
     const blob = new Blob([rows.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -229,7 +240,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updateProfile, getLog,
       addMeal, updateMeal, deleteMeal,
       addTraining, updateTraining, deleteTraining,
-      updateMetrics, updateDayNote, setDayTypeOverride,
+      updateMetrics, updateDayNote, updateExtraBurn, setDayTypeOverride,
       addFoodItem, updateFoodItem, removeFoodItem,
       addMealTemplate, removeMealTemplate,
       exportJSON, exportCSV, importJSON, resetData, reload,

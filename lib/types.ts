@@ -5,7 +5,7 @@ export interface UserProfile {
   age: number;
   heightCm: number;
   weightKg: number;
-  planStartDate: string; // ISO date string YYYY-MM-DD
+  planStartDate: string;
   goalDate: string;
   goalLoseKg: number;
   proteinTarget: number;
@@ -26,11 +26,13 @@ export interface UserProfile {
   };
   useFixedBreakfast: boolean;
   countExerciseCalories: boolean;
+  /** BMR override in kcal/day. If undefined, computed from Mifflin-St Jeor. */
+  bmrOverride?: number;
 }
 
 export interface MealEntry {
   id: string;
-  time: string; // HH:MM
+  time: string;
   name: string;
   calories: number;
   protein?: number;
@@ -54,10 +56,12 @@ export interface DayMetrics {
   waterLiters?: number;
   sleepHours?: number;
   weightKg?: number;
+  /** Extra calories burned today not from logged trainings (e.g. from watch summary) */
+  extraBurn?: number;
 }
 
 export interface DayLog {
-  date: string; // YYYY-MM-DD
+  date: string;
   dayTypeOverride?: DayType;
   meals: MealEntry[];
   trainings: TrainingEntry[];

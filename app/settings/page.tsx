@@ -10,7 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 import { useAppStore } from "@/lib/store";
+import { computeBMR, getEffectiveBMR } from "@/lib/calculations";
 import type { AppData } from "@/lib/types";
 
 const profileSchema = z.object({
@@ -26,6 +28,7 @@ const profileSchema = z.object({
   caloriePilates: z.coerce.number().min(500).max(5000),
   calorieRun: z.coerce.number().min(500).max(5000),
   calorieRest: z.coerce.number().min(500).max(5000),
+  bmrOverride: z.coerce.number().min(500).max(5000).optional(),
 });
 
 export default function SettingsPage() {
@@ -33,6 +36,10 @@ export default function SettingsPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [saved, setSaved] = useState(false);
   const [importMode, setImportMode] = useState<"merge" | "overwrite">("overwrite");
+  const [useBMROverride, setUseBMROverride] = useState(!!profile.bmrOverride);
+
+  const computedBMR = computeBMR(profile);
+  const effectiveBMR = getEffectiveBMR(profile);
 
   const form = useForm<z.infer<typeof profileSchema>>({
     resolver: zodResolver(profileSchema),
@@ -49,6 +56,7 @@ export default function SettingsPage() {
       caloriePilates: profile.calorieTargets.pilates,
       calorieRun: profile.calorieTargets.run,
       calorieRest: profile.calorieTargets.rest,
+      bmrOverride: profile.bmrOverride,
     },
   });
 
@@ -68,6 +76,7 @@ export default function SettingsPage() {
         run: data.calorieRun,
         rest: data.calorieRest,
       },
+      bmrOverride: useBMROverride && data.bmrOverride ? data.bmrOverride : undefined,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -141,8 +150,51 @@ export default function SettingsPage() {
 
             <Separator />
 
+            {/* BMR section */}
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium">Basal Metabolic Rate (BMR)</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  BMR is the foundation of deficit calculations: Deficit = BMR + exercise burn + extra burn − calories eaten.
+                </p>
+              </div>
+              <div className="rounded-md border p-3 bg-muted/30 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm">Mifflin-St Jeor (computed)</p>
+                    <p className="text-xs text-muted-foreground">10×weight + 6.25×height − 5×age − 161</p>
+                  </div>
+                  <Badge variant="secondary" className="text-base font-semibold px-3">{computedBMR} kcal</Badge>
+                </div>
+                <Separator />
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Active BMR (source of truth)</p>
+                  </div>
+                  <Badge className="text-base font-semibold px-3">{effectiveBMR} kcal</Badge>
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Override BMR manually</p>
+                  <p className="text-xs text-muted-foreground">Use your own measured value</p>
+                </div>
+                <Switch checked={useBMROverride} onCheckedChange={setUseBMROverride} />
+              </div>
+              {useBMROverride && (
+                <FormField label="BMR override (kcal/day)">
+                  <Input type="number" placeholder={`e.g. ${computedBMR}`} {...form.register("bmrOverride")} />
+                </FormField>
+              )}
+            </div>
+
+            <Separator />
+
             <div>
-              <p className="text-sm font-medium mb-3">Calorie targets</p>
+              <p className="text-sm font-medium mb-1">Calorie intake targets</p>
+              <p className="text-xs text-muted-foreground mb-3">
+                These are daily eating targets — not burn targets. Used for intake adherence tracking.
+              </p>
               <div className="grid grid-cols-2 gap-3">
                 <FormField label="Hybrid day (kcal)">
                   <Input type="number" {...form.register("calorieHybrid")} />
@@ -185,8 +237,8 @@ export default function SettingsPage() {
           <Separator />
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium">Count exercise calories</p>
-              <p className="text-xs text-muted-foreground">Add burned calories to daily allowance</p>
+              <p className="text-sm font-medium">Count exercise calories (legacy)</p>
+              <p className="text-xs text-muted-foreground">Deprecated — use caloriesBurned per training session instead</p>
             </div>
             <Switch
               checked={profile.countExerciseCalories}
@@ -200,7 +252,7 @@ export default function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Weekly Schedule</CardTitle>
-          <CardDescription>Default day types for auto-detection</CardDescription>
+          <CardDescription>Default day types for auto day-type detection</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-7 gap-1">
@@ -210,9 +262,7 @@ export default function SettingsPage() {
                 <select
                   className="w-full text-xs border rounded p-1 bg-background"
                   value={profile.weeklySchedule[day]}
-                  onChange={e => updateProfile({
-                    weeklySchedule: { ...profile.weeklySchedule, [day]: e.target.value }
-                  })}
+                  onChange={e => updateProfile({ weeklySchedule: { ...profile.weeklySchedule, [day]: e.target.value } })}
                 >
                   <option value="hybrid">H</option>
                   <option value="pilates">P</option>
@@ -237,9 +287,7 @@ export default function SettingsPage() {
             <Button variant="outline" onClick={exportJSON}>Export JSON</Button>
             <Button variant="outline" onClick={exportCSV}>Export CSV</Button>
           </div>
-
           <Separator />
-
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <Label className="text-sm">Import mode:</Label>
@@ -257,17 +305,11 @@ export default function SettingsPage() {
                 ))}
               </div>
             </div>
-            <Button variant="outline" className="w-full" onClick={() => fileRef.current?.click()}>
-              Import JSON
-            </Button>
+            <Button variant="outline" className="w-full" onClick={() => fileRef.current?.click()}>Import JSON</Button>
             <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
           </div>
-
           <Separator />
-
-          <Button variant="destructive" className="w-full" onClick={handleReset}>
-            Reset All Data
-          </Button>
+          <Button variant="destructive" className="w-full" onClick={handleReset}>Reset All Data</Button>
         </CardContent>
       </Card>
     </div>

@@ -1,12 +1,40 @@
 import type { DayLog, DayType, UserProfile } from "./types";
-import { format, parseISO, differenceInDays, isWithinInterval, addDays } from "date-fns";
+import { format, parseISO, differenceInDays, addDays } from "date-fns";
+
+// ─── BMR ────────────────────────────────────────────────────────────────────
+
+/** Mifflin-St Jeor for women: 10*w + 6.25*h - 5*a - 161 */
+export function computeBMR(profile: UserProfile): number {
+  return Math.round(10 * profile.weightKg + 6.25 * profile.heightCm - 5 * profile.age - 161);
+}
+
+/** Effective BMR: user override takes precedence, else Mifflin-St Jeor */
+export function getEffectiveBMR(profile: UserProfile): number {
+  return profile.bmrOverride ?? computeBMR(profile);
+}
+
+// ─── Burn breakdown for a day ───────────────────────────────────────────────
+
+export function getExerciseBurn(log: DayLog | undefined): number {
+  if (!log) return 0;
+  return log.trainings.reduce((sum, t) => sum + (t.caloriesBurned ?? 0), 0);
+}
+
+export function getExtraBurn(log: DayLog | undefined): number {
+  return log?.metrics?.extraBurn ?? 0;
+}
+
+export function getDailyBurn(profile: UserProfile, log: DayLog | undefined): number {
+  return getEffectiveBMR(profile) + getExerciseBurn(log) + getExtraBurn(log);
+}
+
+// ─── Day type ────────────────────────────────────────────────────────────────
 
 export function getScheduledDayType(profile: UserProfile, date: Date): DayType {
   const dayMap: Record<number, keyof UserProfile["weeklySchedule"]> = {
     0: "sun", 1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri", 6: "sat",
   };
-  const key = dayMap[date.getDay()];
-  return profile.weeklySchedule[key];
+  return profile.weeklySchedule[dayMap[date.getDay()]];
 }
 
 export function getEffectiveDayType(profile: UserProfile, log: DayLog | undefined, date: Date): DayType {
@@ -22,6 +50,8 @@ export function getEffectiveDayType(profile: UserProfile, log: DayLog | undefine
 export function getCalorieTarget(profile: UserProfile, dayType: DayType): number {
   return profile.calorieTargets[dayType] ?? profile.calorieTargets.rest;
 }
+
+// ─── Intake totals ───────────────────────────────────────────────────────────
 
 export function getTotalMealCalories(log: DayLog | undefined): number {
   if (!log) return 0;
@@ -43,16 +73,20 @@ export function getTotalFat(log: DayLog | undefined): number {
   return log.meals.reduce((sum, m) => sum + (m.fat ?? 0), 0);
 }
 
-export function getDailyDeficit(
-  profile: UserProfile,
-  log: DayLog | undefined,
-  date: Date
-): number {
-  const target = getCalorieTarget(profile, getEffectiveDayType(profile, log, date));
-  const eaten = getTotalMealCalories(log);
-  return target - eaten; // positive = under target (deficit)
+// ─── Deficit (new model: burn-based) ─────────────────────────────────────────
+
+/**
+ * deficitVsBurn = dailyBurn - caloriesEaten
+ * Positive = deficit (ate less than burned). Negative = surplus.
+ */
+export function getDeficitVsBurn(profile: UserProfile, log: DayLog | undefined): number {
+  return getDailyBurn(profile, log) - getTotalMealCalories(log);
 }
 
+/**
+ * Accumulated deficit over a date range.
+ * Only counts days where at least one meal was logged.
+ */
 export function getAccumulatedDeficit(
   profile: UserProfile,
   logs: Record<string, DayLog>,
@@ -64,9 +98,8 @@ export function getAccumulatedDeficit(
   while (current <= toDate) {
     const dateStr = format(current, "yyyy-MM-dd");
     const log = logs[dateStr];
-    const eaten = getTotalMealCalories(log);
-    if (eaten > 0) {
-      total += getDailyDeficit(profile, log, current);
+    if (getTotalMealCalories(log) > 0) {
+      total += getDeficitVsBurn(profile, log);
     }
     current = addDays(current, 1);
   }
@@ -77,12 +110,14 @@ export function getEstimatedFatLoss(accumulatedDeficitKcal: number): number {
   return accumulatedDeficitKcal / 7700;
 }
 
+// ─── Rolling averages ────────────────────────────────────────────────────────
+
 export function getRolling7DayAvg(
   profile: UserProfile,
   logs: Record<string, DayLog>,
   toDate: Date
-): { avgCalories: number; avgProtein: number; avgDeficit: number; daysLogged: number } {
-  let totalCal = 0, totalProt = 0, totalDef = 0, days = 0;
+): { avgCalories: number; avgProtein: number; avgDeficit: number; avgBurn: number; daysLogged: number } {
+  let totalCal = 0, totalProt = 0, totalDef = 0, totalBurn = 0, days = 0;
   for (let i = 6; i >= 0; i--) {
     const d = addDays(toDate, -i);
     const dateStr = format(d, "yyyy-MM-dd");
@@ -90,18 +125,22 @@ export function getRolling7DayAvg(
     if (log && getTotalMealCalories(log) > 0) {
       totalCal += getTotalMealCalories(log);
       totalProt += getTotalProtein(log);
-      totalDef += getDailyDeficit(profile, log, d);
+      totalDef += getDeficitVsBurn(profile, log);
+      totalBurn += getDailyBurn(profile, log);
       days++;
     }
   }
-  if (days === 0) return { avgCalories: 0, avgProtein: 0, avgDeficit: 0, daysLogged: 0 };
+  if (days === 0) return { avgCalories: 0, avgProtein: 0, avgDeficit: 0, avgBurn: 0, daysLogged: 0 };
   return {
     avgCalories: Math.round(totalCal / days),
     avgProtein: Math.round(totalProt / days),
     avgDeficit: Math.round(totalDef / days),
+    avgBurn: Math.round(totalBurn / days),
     daysLogged: days,
   };
 }
+
+// ─── Projection ──────────────────────────────────────────────────────────────
 
 export function getProjection(
   profile: UserProfile,
@@ -133,24 +172,25 @@ export function getProjection(
   };
 }
 
-export function get14DayCaloriesAndTarget(
+// ─── Chart helpers ───────────────────────────────────────────────────────────
+
+export function get30DayCaloriesAndTarget(
   profile: UserProfile,
   logs: Record<string, DayLog>,
   today: Date
-): Array<{ date: string; calories: number; target: number }> {
-  const result = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = addDays(today, -i);
+): Array<{ date: string; calories: number; target: number; burn: number }> {
+  return Array.from({ length: 30 }, (_, i) => {
+    const d = addDays(today, -(29 - i));
     const dateStr = format(d, "yyyy-MM-dd");
     const log = logs[dateStr];
     const dayType = getEffectiveDayType(profile, log, d);
-    result.push({
+    return {
       date: format(d, "MMM d"),
       calories: getTotalMealCalories(log),
       target: getCalorieTarget(profile, dayType),
-    });
-  }
-  return result;
+      burn: getDailyBurn(profile, log),
+    };
+  });
 }
 
 export function getWeightTrend(
@@ -158,15 +198,10 @@ export function getWeightTrend(
   today: Date,
   days = 30
 ): Array<{ date: string; weight: number | null }> {
-  const result = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const d = addDays(today, -i);
+  return Array.from({ length: days }, (_, i) => {
+    const d = addDays(today, -(days - 1 - i));
     const dateStr = format(d, "yyyy-MM-dd");
     const log = logs[dateStr];
-    result.push({
-      date: format(d, "MMM d"),
-      weight: log?.metrics?.weightKg ?? null,
-    });
-  }
-  return result;
+    return { date: format(d, "MMM d"), weight: log?.metrics?.weightKg ?? null };
+  });
 }

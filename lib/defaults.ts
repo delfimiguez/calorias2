@@ -1,5 +1,4 @@
 import type { FoodItem, MealTemplate, UserProfile } from "./types";
-import { v4 as uuidv4 } from "uuid";
 
 export const BREAKFAST_TEMPLATE_ID = "breakfast-default";
 
@@ -70,4 +69,5 @@ export const DEFAULT_PROFILE: UserProfile = {
   },
   useFixedBreakfast: true,
   countExerciseCalories: false,
+  // bmrOverride intentionally omitted → computed from Mifflin-St Jeor
 };

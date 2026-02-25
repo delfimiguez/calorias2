@@ -2,21 +2,25 @@
 
 import { useState } from "react";
 import { format } from "date-fns";
-import { Plus, Utensils, Dumbbell, Activity, Scale, CheckCircle2, Circle, TrendingDown, Target, Flame } from "lucide-react";
+import { Plus, Utensils, Dumbbell, Activity, Scale, TrendingDown, Target, Flame, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useAppStore } from "@/lib/store";
 import {
-  getEffectiveDayType, getCalorieTarget, getTotalMealCalories, getTotalProtein,
-  getTotalCarbs, getTotalFat, getDailyDeficit, getAccumulatedDeficit,
-  getEstimatedFatLoss, getProjection, getRolling7DayAvg,
+  getEffectiveDayType, getCalorieTarget,
+  getTotalMealCalories, getTotalProtein, getTotalCarbs, getTotalFat,
+  getDailyBurn, getExerciseBurn, getExtraBurn, getDeficitVsBurn,
+  getEffectiveBMR, computeBMR,
+  getAccumulatedDeficit, getEstimatedFatLoss, getProjection, getRolling7DayAvg,
 } from "@/lib/calculations";
 import { MealDialog } from "@/components/dialogs/MealDialog";
 import { TrainingDialog } from "@/components/dialogs/TrainingDialog";
 import { MetricsDialog } from "@/components/dialogs/MetricsDialog";
+import { ExtraBurnDialog } from "@/components/dialogs/ExtraBurnDialog";
 import { parseISO } from "date-fns";
 
 const DAY_TYPE_LABELS: Record<string, string> = {
@@ -43,30 +47,43 @@ export default function TodayPage() {
   const [mealOpen, setMealOpen] = useState(false);
   const [trainingOpen, setTrainingOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
+  const [burnOpen, setBurnOpen] = useState(false);
 
+  // Intake target (plan adherence)
   const dayType = getEffectiveDayType(profile, log, today);
-  const target = getCalorieTarget(profile, dayType);
+  const targetIntake = getCalorieTarget(profile, dayType);
   const eaten = getTotalMealCalories(log);
-  const remaining = target - eaten;
+  const remainingIntake = targetIntake - eaten;
+
+  // Burn model
+  const bmr = getEffectiveBMR(profile);
+  const computedBMR = computeBMR(profile);
+  const exerciseBurn = getExerciseBurn(log);
+  const extraBurn = getExtraBurn(log);
+  const totalBurn = getDailyBurn(profile, log);
+  const deficitVsBurn = getDeficitVsBurn(profile, log);
+
+  // Macros
   const protein = getTotalProtein(log);
   const carbs = getTotalCarbs(log);
   const fat = getTotalFat(log);
+  const carbTarget = Math.round((targetIntake * 0.4) / 4);
+  const fatTarget = Math.round((targetIntake * 0.25) / 9);
 
+  // Accumulated / projection
   const startDate = parseISO(profile.planStartDate);
   const accDef = getAccumulatedDeficit(profile, logs, startDate, today);
   const fatLoss = getEstimatedFatLoss(accDef);
   const projection = getProjection(profile, logs, today);
   const rolling = getRolling7DayAvg(profile, logs, today);
 
-  const calPct = Math.min(100, Math.round((eaten / target) * 100));
+  const calPct = Math.min(100, Math.round((eaten / targetIntake) * 100));
   const protPct = Math.min(100, Math.round((protein / profile.proteinTarget) * 100));
-  const carbTarget = Math.round((target * 0.4) / 4);
-  const fatTarget = Math.round((target * 0.25) / 9);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-muted-foreground text-sm animate-pulse">Loading...</div>
+        <div className="text-muted-foreground text-sm animate-pulse">Loading…</div>
       </div>
     );
   }
@@ -84,28 +101,41 @@ export default function TodayPage() {
         </div>
       </div>
 
-      {/* Hero - Calories Remaining */}
-      <Card className="overflow-hidden">
-        <CardContent className="p-6">
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <p className="text-sm text-muted-foreground">Calories remaining</p>
-              <p className={`text-5xl font-semibold tracking-tight mt-1 ${remaining < 0 ? "text-destructive" : ""}`}>
-                {remaining}
-              </p>
-              <p className="text-sm text-muted-foreground mt-1">{eaten} eaten / {target} target</p>
+      {/* Hero — two panels side by side */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* Panel A: Target intake adherence */}
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Target intake</p>
+            <p className={`text-5xl font-semibold tracking-tight mt-1 ${remainingIntake < 0 ? "text-destructive" : ""}`}>
+              {remainingIntake}
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">kcal remaining · target {targetIntake}</p>
+            <Progress value={calPct} className="h-2 mt-3" />
+            <p className="text-xs text-muted-foreground mt-1.5">{eaten} eaten / {targetIntake} target</p>
+          </CardContent>
+        </Card>
+
+        {/* Panel B: Burn model */}
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Deficit vs burn</p>
+            <p className={`text-5xl font-semibold tracking-tight mt-1 ${deficitVsBurn < 0 ? "text-destructive" : "text-emerald-600"}`}>
+              {deficitVsBurn > 0 ? `−${deficitVsBurn}` : `+${Math.abs(deficitVsBurn)}`}
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">kcal {deficitVsBurn >= 0 ? "deficit" : "surplus"}</p>
+            <Separator className="my-3" />
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <BurnBreakdownItem label="Basal (BMR)" value={bmr} />
+              <BurnBreakdownItem label="Exercise" value={exerciseBurn} highlight={exerciseBurn > 0} />
+              <BurnBreakdownItem label="Extra" value={extraBurn} highlight={extraBurn > 0} />
             </div>
-            <div className="text-right">
-              <p className="text-xs text-muted-foreground">Today's deficit</p>
-              <p className={`text-2xl font-semibold ${remaining > 0 ? "text-emerald-600" : "text-destructive"}`}>
-                {remaining > 0 ? `−${remaining}` : `+${Math.abs(remaining)}`}
-              </p>
-            </div>
-          </div>
-          <Progress value={calPct} className="h-2.5" />
-          <p className="text-xs text-muted-foreground mt-2">{calPct}% of daily target</p>
-        </CardContent>
-      </Card>
+            <p className="text-xs text-muted-foreground text-center mt-2">
+              Total burn: <span className="font-semibold text-foreground">{totalBurn} kcal</span>
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Macro bars */}
       <Card>
@@ -120,10 +150,11 @@ export default function TodayPage() {
       </Card>
 
       {/* Quick Add */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-5 gap-2">
         {[
           { label: "Meal", icon: Utensils, action: () => setMealOpen(true) },
           { label: "Training", icon: Dumbbell, action: () => setTrainingOpen(true) },
+          { label: "+ Burn", icon: Flame, action: () => setBurnOpen(true) },
           { label: "Metrics", icon: Scale, action: () => setMetricsOpen(true) },
           { label: "Steps", icon: Activity, action: () => setMetricsOpen(true) },
         ].map(({ label, icon: Icon, action }) => (
@@ -163,12 +194,7 @@ export default function TodayPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          className="text-destructive"
-                          onClick={() => deleteMeal(todayStr, meal.id)}
-                        >
-                          Delete
-                        </DropdownMenuItem>
+                        <DropdownMenuItem className="text-destructive" onClick={() => deleteMeal(todayStr, meal.id)}>Delete</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -196,7 +222,10 @@ export default function TodayPage() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">{TRAINING_TYPE_LABELS[t.type]}</p>
                       <p className="text-xs text-muted-foreground">
-                        {t.durationMin} min{t.distanceKm ? ` · ${t.distanceKm} km` : ""}{t.rpe ? ` · RPE ${t.rpe}` : ""}
+                        {t.durationMin} min
+                        {t.distanceKm ? ` · ${t.distanceKm} km` : ""}
+                        {t.rpe ? ` · RPE ${t.rpe}` : ""}
+                        {t.caloriesBurned ? ` · 🔥 ${t.caloriesBurned} kcal` : ""}
                       </p>
                     </div>
                     <DropdownMenu>
@@ -206,16 +235,20 @@ export default function TodayPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          className="text-destructive"
-                          onClick={() => deleteTraining(todayStr, t.id)}
-                        >
-                          Delete
-                        </DropdownMenuItem>
+                        <DropdownMenuItem className="text-destructive" onClick={() => deleteTraining(todayStr, t.id)}>Delete</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
                 ))}
+                {extraBurn > 0 && (
+                  <div className="flex items-center justify-between py-1.5 border-b last:border-0">
+                    <div>
+                      <p className="text-sm font-medium">Extra burn (watch/other)</p>
+                      <p className="text-xs text-muted-foreground">🔥 {extraBurn} kcal</p>
+                    </div>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setBurnOpen(true)}>Edit</Button>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -227,8 +260,8 @@ export default function TodayPage() {
         <StatCard
           icon={TrendingDown}
           label="Accumulated deficit"
-          value={`${Math.round(accDef)} kcal`}
-          sub={`Est. fat loss: ${fatLoss.toFixed(2)} kg`}
+          value={`${Math.round(accDef).toLocaleString()} kcal`}
+          sub={`Est. fat loss: ${fatLoss.toFixed(2)} kg (estimate)`}
           color="text-emerald-600"
         />
         <StatCard
@@ -239,16 +272,16 @@ export default function TodayPage() {
           color={projection.onTrack ? "text-emerald-600" : "text-amber-600"}
         />
         <StatCard
-          icon={Flame}
+          icon={Zap}
           label="7-day avg deficit"
           value={`${rolling.avgDeficit} kcal/day`}
-          sub={`Avg calories: ${rolling.avgCalories} kcal`}
+          sub={`Avg intake: ${rolling.avgCalories} · Avg burn: ${rolling.avgBurn}`}
           color="text-blue-600"
         />
       </div>
 
-      {/* Metrics */}
-      {log?.metrics && Object.keys(log.metrics).length > 0 && (
+      {/* Metrics strip */}
+      {log?.metrics && (Object.keys(log.metrics).filter(k => k !== "extraBurn")).length > 0 && (
         <Card>
           <CardHeader className="pb-3 flex-row items-center justify-between">
             <CardTitle className="text-base">Today's metrics</CardTitle>
@@ -268,6 +301,7 @@ export default function TodayPage() {
       <MealDialog open={mealOpen} onOpenChange={setMealOpen} date={today} />
       <TrainingDialog open={trainingOpen} onOpenChange={setTrainingOpen} date={today} />
       <MetricsDialog open={metricsOpen} onOpenChange={setMetricsOpen} date={today} />
+      <ExtraBurnDialog open={burnOpen} onOpenChange={setBurnOpen} date={today} />
     </div>
   );
 }
@@ -279,10 +313,19 @@ function getGreeting() {
   return "evening";
 }
 
+function BurnBreakdownItem({ label, value, highlight }: { label: string; value: number; highlight?: boolean }) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-sm font-semibold mt-0.5 ${highlight ? "text-emerald-600" : ""}`}>{value}</p>
+    </div>
+  );
+}
+
 function MacroBar({ label, value, target, unit, color }: {
   label: string; value: number; target: number; unit: string; color: string;
 }) {
-  const pct = Math.min(100, Math.round((value / target) * 100));
+  const pct = Math.min(100, Math.round((value / Math.max(target, 1)) * 100));
   const remaining = Math.max(0, target - value);
   return (
     <div className="space-y-1.5">
@@ -295,10 +338,7 @@ function MacroBar({ label, value, target, unit, color }: {
         </div>
       </div>
       <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
-        <div
-          className={`h-full rounded-full transition-all ${color}`}
-          style={{ width: `${pct}%` }}
-        />
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );

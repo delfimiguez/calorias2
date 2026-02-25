@@ -17,6 +17,7 @@ const schema = z.object({
   durationMin: z.coerce.number().min(1),
   distanceKm: z.coerce.number().optional(),
   rpe: z.coerce.number().min(1).max(10).optional(),
+  caloriesBurned: z.coerce.number().min(0).optional(),
   notes: z.string().optional(),
 });
 
@@ -50,6 +51,7 @@ export function TrainingDialog({ open, onOpenChange, date }: TrainingDialogProps
       durationMin: data.durationMin,
       distanceKm: data.distanceKm,
       rpe: data.rpe,
+      caloriesBurned: data.caloriesBurned,
       notes: data.notes,
     });
     form.reset();
@@ -101,6 +103,10 @@ export function TrainingDialog({ open, onOpenChange, date }: TrainingDialogProps
             <div className="space-y-1.5">
               <Label>RPE (1–10)</Label>
               <Input type="number" min="1" max="10" placeholder="optional" {...form.register("rpe")} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Calories burned (kcal)</Label>
+              <Input type="number" placeholder="from watch" {...form.register("caloriesBurned")} />
             </div>
           </div>
 

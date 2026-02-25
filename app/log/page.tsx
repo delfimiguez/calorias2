@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { format, parseISO, addDays, subDays } from "date-fns";
-import { ChevronLeft, ChevronRight, Plus, Utensils, Dumbbell } from "lucide-react";
+import { format, addDays, subDays } from "date-fns";
+import { ChevronLeft, ChevronRight, Plus, Utensils, Dumbbell, Flame } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,11 +11,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useAppStore } from "@/lib/store";
 import {
   getEffectiveDayType, getCalorieTarget, getTotalMealCalories,
-  getTotalProtein, getDailyDeficit,
+  getTotalProtein, getDeficitVsBurn, getDailyBurn, getEffectiveBMR,
+  getExerciseBurn, getExtraBurn,
 } from "@/lib/calculations";
 import { MealDialog } from "@/components/dialogs/MealDialog";
 import { TrainingDialog } from "@/components/dialogs/TrainingDialog";
 import { MetricsDialog } from "@/components/dialogs/MetricsDialog";
+import { ExtraBurnDialog } from "@/components/dialogs/ExtraBurnDialog";
 import type { DayType } from "@/lib/types";
 
 const DAY_TYPE_LABELS: Record<string, string> = {
@@ -31,14 +33,19 @@ export default function LogPage() {
   const [mealOpen, setMealOpen] = useState(false);
   const [trainingOpen, setTrainingOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
+  const [burnOpen, setBurnOpen] = useState(false);
 
   const dateStr = format(selectedDate, "yyyy-MM-dd");
   const log = logs[dateStr];
   const dayType = getEffectiveDayType(profile, log, selectedDate);
-  const target = getCalorieTarget(profile, dayType);
+  const targetIntake = getCalorieTarget(profile, dayType);
   const eaten = getTotalMealCalories(log);
   const protein = getTotalProtein(log);
-  const deficit = getDailyDeficit(profile, log, selectedDate);
+  const bmr = getEffectiveBMR(profile);
+  const exerciseBurn = getExerciseBurn(log);
+  const extraBurn = getExtraBurn(log);
+  const totalBurn = getDailyBurn(profile, log);
+  const deficit = getDeficitVsBurn(profile, log);
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-5">
@@ -61,32 +68,50 @@ export default function LogPage() {
 
       {/* Day summary bar */}
       <Card>
-        <CardContent className="p-4 flex flex-wrap items-center gap-4">
-          <div>
-            <p className="text-xs text-muted-foreground">Day type</p>
-            <div className="flex items-center gap-2 mt-1">
-              <Badge variant="secondary">{DAY_TYPE_LABELS[dayType]}</Badge>
-              <Select
-                value={log?.dayTypeOverride ?? "auto"}
-                onValueChange={(v) => setDayTypeOverride(dateStr, v === "auto" ? undefined : v as DayType)}
-              >
-                <SelectTrigger className="h-7 text-xs w-28">
-                  <SelectValue placeholder="Override" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">Auto</SelectItem>
-                  <SelectItem value="hybrid">Hybrid</SelectItem>
-                  <SelectItem value="pilates">Pilates</SelectItem>
-                  <SelectItem value="run">Run Z2</SelectItem>
-                  <SelectItem value="rest">Rest</SelectItem>
-                </SelectContent>
-              </Select>
+        <CardContent className="p-4 space-y-3">
+          {/* Row 1: day type + intake */}
+          <div className="flex flex-wrap items-center gap-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Day type</p>
+              <div className="flex items-center gap-2 mt-1">
+                <Badge variant="secondary">{DAY_TYPE_LABELS[dayType]}</Badge>
+                <Select
+                  value={log?.dayTypeOverride ?? "auto"}
+                  onValueChange={(v) => setDayTypeOverride(dateStr, v === "auto" ? undefined : v as DayType)}
+                >
+                  <SelectTrigger className="h-7 text-xs w-28">
+                    <SelectValue placeholder="Override" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto</SelectItem>
+                    <SelectItem value="hybrid">Hybrid</SelectItem>
+                    <SelectItem value="pilates">Pilates</SelectItem>
+                    <SelectItem value="run">Run Z2</SelectItem>
+                    <SelectItem value="rest">Rest</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+            <StatItem label="Target intake" value={`${targetIntake} kcal`} />
+            <StatItem label="Eaten" value={`${eaten} kcal`} />
+            <StatItem label="Protein" value={`${protein.toFixed(0)}g / ${profile.proteinTarget}g`} />
           </div>
-          <div className="h-8 w-px bg-border hidden md:block" />
-          <StatItem label="Calories" value={`${eaten} / ${target}`} />
-          <StatItem label="Protein" value={`${protein.toFixed(0)}g / ${profile.proteinTarget}g`} />
-          <StatItem label="Deficit" value={`${deficit > 0 ? "−" : "+"}${Math.abs(deficit)} kcal`} color={deficit > 0 ? "text-emerald-600" : "text-destructive"} />
+
+          {/* Row 2: burn breakdown */}
+          <div className="pt-2 border-t flex flex-wrap gap-4 items-center">
+            <StatItem label="Basal (BMR)" value={`${bmr} kcal`} />
+            <StatItem label="Exercise burn" value={`${exerciseBurn} kcal`} color={exerciseBurn > 0 ? "text-emerald-600" : undefined} />
+            <StatItem label="Extra burn" value={`${extraBurn} kcal`} color={extraBurn > 0 ? "text-emerald-600" : undefined} />
+            <StatItem label="Total burn" value={`${totalBurn} kcal`} />
+            <StatItem
+              label="Deficit vs burn"
+              value={`${deficit > 0 ? "−" : "+"}${Math.abs(deficit)} kcal`}
+              color={deficit > 0 ? "text-emerald-600" : "text-destructive"}
+            />
+            <Button size="sm" variant="outline" className="h-7 ml-auto" onClick={() => setBurnOpen(true)}>
+              <Flame className="h-3.5 w-3.5 mr-1" /> Extra burn
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -125,9 +150,7 @@ export default function LogPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem className="text-destructive" onClick={() => deleteMeal(dateStr, meal.id)}>
-                        Delete
-                      </DropdownMenuItem>
+                      <DropdownMenuItem className="text-destructive" onClick={() => deleteMeal(dateStr, meal.id)}>Delete</DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -161,6 +184,7 @@ export default function LogPage() {
                       {t.durationMin} min
                       {t.distanceKm && ` · ${t.distanceKm} km`}
                       {t.rpe && ` · RPE ${t.rpe}`}
+                      {t.caloriesBurned ? ` · 🔥 ${t.caloriesBurned} kcal burned` : ""}
                       {t.notes && ` · ${t.notes}`}
                     </p>
                   </div>
@@ -171,9 +195,7 @@ export default function LogPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem className="text-destructive" onClick={() => deleteTraining(dateStr, t.id)}>
-                        Delete
-                      </DropdownMenuItem>
+                      <DropdownMenuItem className="text-destructive" onClick={() => deleteTraining(dateStr, t.id)}>Delete</DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -192,7 +214,7 @@ export default function LogPage() {
           </Button>
         </CardHeader>
         <CardContent>
-          {!log?.metrics || Object.keys(log.metrics).length === 0 ? (
+          {!log?.metrics || Object.keys(log.metrics).filter(k => k !== "extraBurn").length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">No metrics logged</p>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -208,6 +230,7 @@ export default function LogPage() {
       <MealDialog open={mealOpen} onOpenChange={setMealOpen} date={selectedDate} />
       <TrainingDialog open={trainingOpen} onOpenChange={setTrainingOpen} date={selectedDate} />
       <MetricsDialog open={metricsOpen} onOpenChange={setMetricsOpen} date={selectedDate} />
+      <ExtraBurnDialog open={burnOpen} onOpenChange={setBurnOpen} date={selectedDate} />
     </div>
   );
 }
